@@ -4415,6 +4415,17 @@ async function lerUmPDF(file){
       const page=await pdf.getPage(p);const content=await page.getTextContent();
       const vp=page.getViewport({scale:1});const pgW=vp.width;
       const items=content.items;const lines={};
+      // Gran Farma: localizar colunas pelo cabeçalho da própria página (o layout varia entre versões do relatório)
+      let gfQtdX=null, gfDescX=null, gfFabX=null, gfCodX=null;
+      if(isGranFarmaDoc){
+        items.forEach(it=>{
+          const s=(it.str||'').trim();const x=it.transform[4];
+          if(/^Qtd\.?$/i.test(s)&&gfQtdX===null)gfQtdX=x;
+          else if(/^Descri/i.test(s)&&gfDescX===null)gfDescX=x;
+          else if(/^C[óo]digo$/i.test(s)&&gfCodX===null)gfCodX=x;
+          else if(/^Fabricante$/i.test(s)&&gfFabX===null)gfFabX=x;
+        });
+      }
       items.forEach(item=>{
         const y=Math.round(item.transform[5]*10)/10;
         if(!lines[y])lines[y]=[];
@@ -4437,8 +4448,34 @@ async function lerUmPDF(file){
             // Fabricante(x≈248) Und.(x≈310) Embalagem "1 X 1"(x≈336) Qtd.(x≈370–485) ... Vlr Total(x≈550+)
             // Vlr Unit / Desc.% / Vlr Unit.Líquido ficam numa linha Y ligeiramente diferente (mesma linha visual),
             // por isso não aparecem nesta "row" e não atrapalham a extração de Qtd.
-            descTokens=row.filter(i=>i.x>=95&&i.x<245).map(i=>i.text);
-            qtdTokens=row.filter(i=>i.x>=370&&i.x<485&&/^\d{1,4}$/.test(i.text)).map(i=>i.text);
+            const reInt=/^\d{1,4}$/;
+            if(gfDescX!==null&&gfFabX!==null){
+              // O texto da descrição começa antes do rótulo "Descrição"; usa a coluna Código como início e remove o código numérico
+              const dIni=gfCodX!==null?gfCodX:gfDescX-40;
+              descTokens=row.filter(i=>i.x>=dIni&&i.x<gfFabX-2).map(i=>i.text);
+            } else {
+              descTokens=row.filter(i=>i.x>=95&&i.x<245).map(i=>i.text);
+            }
+            // Remove código interno do fornecedor que às vezes cai no início da descrição
+            while(descTokens.length&&/^\d+$/.test(descTokens[0]))descTokens.shift();
+            qtdTokens=[];
+            // 1) Pela posição do cabeçalho "Qtd." desta página
+            if(gfQtdX!==null){
+              qtdTokens=row.filter(i=>i.x>=gfQtdX-15&&i.x<=gfQtdX+30&&reInt.test(i.text)).map(i=>i.text);
+            }
+            // 2) Primeiro inteiro depois da embalagem "1 X 1"
+            if(!qtdTokens.length){
+              const ix=row.findIndex(i=>/^\d+\s*[Xx]\s*\d+$/.test(i.text)||/^[Xx]$/.test(i.text));
+              if(ix>=0){
+                let k=ix+1;
+                if(/^[Xx]$/.test(row[ix].text))k++; // pula o "1" depois do X
+                for(;k<row.length;k++){if(reInt.test(row[k].text)){qtdTokens=[row[k].text];break;}if(/,/.test(row[k].text))break;}
+              }
+            }
+            // 3) Janela fixa antiga (último recurso)
+            if(!qtdTokens.length){
+              qtdTokens=row.filter(i=>i.x>=370&&i.x<485&&reInt.test(i.text)).map(i=>i.text);
+            }
           } else {
             descTokens=row.filter(i=>i.x>=100&&i.x<300).map(i=>i.text);
             qtdTokens=row.filter(i=>i.x>=480&&i.x<610).map(i=>i.text);
