@@ -5311,6 +5311,33 @@ function detectarFormatoPlanilha(rows){
     if(uqItems.length) return{items:uqItems,formato:'União Química'};
   }
 
+  // ── Formato simples sem CNPJ: "Código de barras | Produto | Pedido" ──────
+  // A coluna "Pedido" é a QUANTIDADE (não o nº do pedido). Sem CNPJ e sem Nº OS
+  // na planilha → o CNPJ é pedido no modal, como nos demais formatos sem CNPJ.
+  var simplesHdrIdx=-1, simplesCol=null;
+  for(var si=0; si<Math.min(10,rows.length); si++){
+    var sh=rows[si].map(function(c){ return String(c||'').toLowerCase().replace(/\s+/g,' ').trim(); });
+    var sEan=sh.findIndex(function(c){ return c.indexOf('barras')>=0 || c==='ean' || c==='código ean' || c==='codigo ean'; });
+    var sQtd=sh.findIndex(function(c){ return c==='pedido' || c==='qtd' || c==='qtd.' || c==='qtde' || c==='quantidade'; });
+    var sDesc=sh.findIndex(function(c){ return c==='produto' || c.indexOf('descri')>=0; });
+    var sTemCnpj=sh.some(function(c){ return c.indexOf('cnpj')>=0 || c.indexOf('federal')>=0; });
+    if(sEan>=0 && sQtd>=0 && sDesc>=0 && !sTemCnpj && sh.filter(Boolean).length<=6){
+      simplesHdrIdx=si; simplesCol={ean:sEan, qtd:sQtd, desc:sDesc}; break;
+    }
+  }
+  if(simplesHdrIdx>=0){
+    var spItems=[];
+    for(var sr=simplesHdrIdx+1; sr<rows.length; sr++){
+      var srow=rows[sr];
+      var sean=limparEan(srow[simplesCol.ean]);
+      if(!isEan(sean)) continue;
+      var sqtd=parseInt(String(srow[simplesCol.qtd]||'').replace(/\./g,''),10)||0;
+      if(sqtd<=0) continue;
+      spItems.push({cnpj:'', ean:sean, desc:String(srow[simplesCol.desc]||'').trim(), qtd:String(sqtd), os:''});
+    }
+    if(spItems.length) return{items:spItems, formato:'Planilha simples (EAN | Produto | Pedido)'};
+  }
+
   let headerIdx=-1;let headerRow=null;
   for(let i=0;i<Math.min(5,rows.length);i++){
     const r=rows[i].map(c=>String(c||'').toLowerCase());
