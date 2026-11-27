@@ -4534,6 +4534,9 @@ function parsearPedidoA7(text){
   var lines=text.split('\n').map(function(l){return l.trim();}).filter(Boolean);
   var isSugestao=lines.some(function(l){return l.indexOf('CNPJ Loja:')>=0||l.indexOf('Sugest')>=0&&l.indexOf('Compras')>=0;});
   if(isSugestao) return parseSugestao(lines);
+  // Formato FARMAVIP — "Sugestao de Compra e Remanejamento de Estoque"
+  var isFarmavip=lines.some(function(l){return l.indexOf('Remanejamento de Estoque')>=0||l.indexOf('Sugestao de Compra e Remanejamento')>=0;});
+  if(isFarmavip) return parseFarmavip(lines);
   // Formato Gran Farma — Relatório de Pedido de Compras
   var isGranFarma=lines.some(function(l){return l.indexOf('Relatório de Pedido de Compras')>=0||l.indexOf('Relat\u00f3rio de Pedido de Compras')>=0||l.indexOf('GRAN FARMA')>=0;});
   if(isGranFarma) return parseGranFarma(lines);
@@ -4895,6 +4898,74 @@ function parseA7(lines){
     }
   }
   return{items:items};
+}
+
+function parseFarmavip(lines){
+  // Formato: "Sugestao de Compra e Remanejamento de Estoque" (FARMAVIP / A7 Pharma)
+  // Estrutura por produto:
+  //   FABRICANTE (linha 1)
+  //   DESCRIÇÃO  (linha 2)
+  //   EAN(13dig) QTD (linha 3) — às vezes QTD fica na linha seguinte
+  var items=[];
+  var reEan=/^(\d{13})/;
+  var reSkip=/^[-]+$|^(Fabric\.|Descricao|Barras|Pedir|Unid\.|ult\.|Prc\.|Pag\.|Relatorio|registros|FARMAVIP|FARMAC|Sugestao|Remanejamento)/i;
+  var reDate=/^\d{2}\/\d{2}\/\d{4}/;
+  var i=0;
+  while(i<lines.length){
+    var line=lines[i];
+    // Pular linhas de cabeçalho e separadores
+    if(reSkip.test(line)||reDate.test(line)||!line){i++;continue;}
+    // Verificar se a linha seguinte é EAN (então linha atual é fabricante, próxima é desc, depois EAN+qtd)
+    // Ou se a linha atual já começa com EAN
+    if(reEan.test(line)){
+      // Linha de EAN + QTD: "7896006220503   4"
+      var parts=line.split(/\s+/);
+      var ean=parts[0];
+      var qtd=parts[1]||'1';
+      // Se qtd não é número, próxima linha pode ter qtd
+      if(!/^\d+$/.test(qtd)){
+        if(i+1<lines.length&&/^\d+$/.test(lines[i+1].trim())){
+          qtd=lines[i+1].trim();i++;
+        } else {
+          qtd='1';
+        }
+      }
+      // Pegar desc e fabricante das linhas anteriores (já processadas no fluxo abaixo)
+      items.push({cnpj:'',ean:ean,desc:'',qtd:qtd,os:''});
+      i++;continue;
+    }
+    // Verificar se próxima linha não-skip também não é EAN → pode ser fabricante/desc
+    var next1=i+1<lines.length?lines[i+1]:'';
+    var next2=i+2<lines.length?lines[i+2]:'';
+    if(reEan.test(next1)){
+      // linha atual = descrição, next1 = EAN linha
+      var desc=line;
+      var eanLine=next1.split(/\s+/);
+      var ean=eanLine[0];
+      var qtd=eanLine[1]||'';
+      if(!/^\d+$/.test(qtd)){
+        if(i+2<lines.length&&/^\d+$/.test(lines[i+2].trim())){qtd=lines[i+2].trim();i++;}
+        else qtd='1';
+      }
+      items.push({cnpj:'',ean:ean,desc:desc,qtd:qtd,os:''});
+      i+=2;continue;
+    }
+    if(!reSkip.test(next1)&&reEan.test(next2)){
+      // linha atual = fabricante, next1 = descrição, next2 = EAN
+      var desc=next1;
+      var eanLine=next2.split(/\s+/);
+      var ean=eanLine[0];
+      var qtd=eanLine[1]||'';
+      if(!/^\d+$/.test(qtd)){
+        if(i+3<lines.length&&/^\d+$/.test(lines[i+3].trim())){qtd=lines[i+3].trim();i++;}
+        else qtd='1';
+      }
+      items.push({cnpj:'',ean:ean,desc:desc,qtd:qtd,os:''});
+      i+=3;continue;
+    }
+    i++;
+  }
+  return{items:items,semCnpj:true};
 }
 
 function parseSugestao(lines){
